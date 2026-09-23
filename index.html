@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Dark Room</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #101116;
+      color: #eee;
+      font-family: Arial, sans-serif;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #hud {
+      position: fixed;
+      z-index: 2;
+      top: 18px;
+      left: 18px;
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      font-size: 15px;
+      line-height: 1.6;
+      pointer-events: none;
+    }
+
+    #message {
+      color: #ffe39a;
+    }
+
+    #crosshair {
+      position: fixed;
+      z-index: 2;
+      left: 50%;
+      top: 50%;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: white;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    #help {
+      position: fixed;
+      z-index: 2;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #eee;
+      font-size: 13px;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    #overlay {
+      position: fixed;
+      z-index: 5;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: rgba(0, 0, 0, 0.78);
+    }
+
+    #panel {
+      width: min(90vw, 520px);
+      padding: 32px;
+      border: 1px solid #82734f;
+      background: rgba(14, 14, 16, 0.97);
+      text-align: center;
+    }
+
+    #title {
+      margin: 0 0 14px;
+      color: #e4cc8d;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+
+    #description {
+      color: #ddd;
+      line-height: 1.6;
+    }
+
+    button {
+      margin-top: 14px;
+      padding: 12px 22px;
+      border: 1px solid #c5a965;
+      background: #302a1f;
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #51452e;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="hud">
+    <div>Relics: <span id="relic-count">0</span> / 3</div>
+    <div id="message">Find the three relics.</div>
+  </div>
+
+  <div id="crosshair"></div>
+  <div id="help">
+    WASD: move · Mouse: look · Shift: run · F: flashlight · Esc: pause
+  </div>
+
+  <div id="overlay">
+    <div id="panel">
+      <h1 id="title">The Dark Room</h1>
+      <p id="description">
+        Find all three relics, then reach the exit. Something is hunting you.
+      </p>
+      <button id="start-button">Enter the room</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from
+      "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js";
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101116);
+    scene.fog = new THREE.FogExp2(0x101116, 0.009);
+
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      100
+    );
+
+    camera.position.set(0, 1.65, 12);
+    camera.rotation.order = "YXZ";
+    scene.add(camera);
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.3;
+    document.body.appendChild(renderer.domElement);
+
+    // Brighter ambient lighting
+    scene.add(new THREE.HemisphereLight(0xc4d2eb, 0x63564b, 1.5));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+
+    // Colored room lights
+    const redLight = new THREE.PointLight(0xff3b32, 24, 18);
+    redLight.position.set(-8, 3, -5);
+    scene.add(redLight);
+
+    const warmLight = new THREE.PointLight(0xffd18a, 20, 18);
+    warmLight.position.set(8, 3, 5);
+    scene.add(warmLight);
+
+    const backLight = new THREE.PointLight(0x9dbbff, 12, 16);
+    backLight.position.set(0, 3, -10);
+    scene.add(backLight);
+
+    // Flashlight
+    const flashlight = new THREE.SpotLight(
+      0xe5edff,
+      110,
+      38,
+      Math.PI / 4,
+      0.55,
+      1.2
+    );
+
+    flashlight.position.set(0, 0, 0);
+    flashlight.target.position.set(0, 0, -1);
+    camera.add(flashlight);
+    camera.add(flashlight.target);
+
+    // A small, broad light paired with the flashlight
+    const flashlightFill = new THREE.PointLight(0xdfe8ff, 2.5, 14);
+    flashlightFill.position.set(0, 0, 0);
+    camera.add(flashlightFill);
+
+    // Materials
+    const wallMaterial = new THREE.MeshStandardMaterial({
+      color: 0x55514c,
+      roughness: 1
+    });
+
+    const floorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x383838,
+      roughness: 1
+    });
+
+    function addBox(width, height, depth, x, y, z, material) {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(width, height, depth),
+        material
+      );
+
+      mesh.position.set(x, y, z);
+      scene.add(mesh);
+      return mesh;
+    }
+
+    // Room floor and walls
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(30, 30),
+      floorMaterial
+    );
+
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0;
+    scene.add(floor);
+
+    addBox(30, 5, 0.5, 0, 2.5, -15, wallMaterial);
+    addBox(30, 5, 0.5, 0, 2.5, 15, wallMaterial);
+    addBox(0.5, 5, 30, -15, 2.5, 0, wallMaterial);
+    addBox(0.5, 5, 30, 15, 2.5, 0, wallMaterial);
+
+    // Obstacles
+    const crateMaterial = new THREE.MeshStandardMaterial({
+      color: 0x49392b,
+      roughness: 1
+    });
+
+    const obstacles = [
+      { x: -4, z: 5, radius: 1.15 },
+      { x: 5, z: 2, radius: 1.15 },
+      { x: 7, z: -6, radius: 1.15 },
+      { x: -6, z: -3, radius: 1.15 }
+    ];
+
+    for (const obstacle of obstacles) {
+      addBox(
+        1.7, 1.7, 1.7,
+        obstacle.x, 0.85, obstacle.z,
+        crateMaterial
+      );
+    }
+
+    // Exit door
+    const doorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x45332a,
+      roughness: 0.9,
+      emissive: 0x321005,
+      emissiveIntensity: 0.7
+    });
+
+    addBox(3.4, 4, 0.35, 0, 2, -14.55, doorMaterial);
+
+    const exitGlow = new THREE.PointLight(0xff572e, 15, 9);
+    exitGlow.position.set(0, 2.5, -12.8);
+    scene.add(exitGlow);
+
+    // Collectible relics
+    const relics = [];
+    const relicPositions = [
+      new THREE.Vector3(-10, 1.2, -9),
+      new THREE.Vector3(10, 1.2, -7),
+      new THREE.Vector3(1, 1.2, 1)
+    ];
+
+    for (const position of relicPositions) {
+      const group = new THREE.Group();
+
+      const stone = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.42, 1),
+        new THREE.MeshStandardMaterial({
+          color: 0xbafff2,
+          emissive: 0x3ad8c5,
+          emissiveIntensity: 2.5,
+          roughness: 0.35
+        })
+      );
+
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.62, 0.045, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0x9ffff2 })
+      );
+
+      group.add(stone);
+      group.add(ring);
+      group.position.copy(position);
+      scene.add(group);
+
+      const glow = new THREE.PointLight(0x54ffe8, 8, 7);
+      glow.position.copy(position);
+      scene.add(glow);
+
+      relics.push({ group, glow, collected: false });
+    }
+
+    // Monster
+    const monster = new THREE.Group();
+
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(0.72, 16, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0x28151c,
+        roughness: 0.85,
+        emissive: 0x30050a
+      })
+    );
+
+    body.scale.set(0.8, 1.25, 0.65);
+    body.position.y = 0.95;
+    monster.add(body);
+
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.38, 16, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0x39232a,
+        roughness: 0.8
+      })
+    );
+
+    head.position.y = 1.9;
+    monster.add(head);
+
+    const eyeMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff382d
+    });
+
+    for (const x of [-0.16, 0.16]) {
+      const eye = new THREE.Mesh(
+        new THREE.SphereGeometry(0.07, 8, 8),
+        eyeMaterial
+      );
+
+      eye.position.set(x, 1.94, 0.32);
+      monster.add(eye);
+    }
+
+    monster.position.set(-10, 0, -2);
+    scene.add(monster);
+
+    const monsterGlow = new THREE.PointLight(0xff2020, 5, 6);
+    monsterGlow.position.set(0, 1.5, 0);
+    monster.add(monsterGlow);
+
+    // UI and game state
+    const overlay = document.querySelector("#overlay");
+    const title = document.querySelector("#title");
+    const description = document.querySelector("#description");
+    const startButton = document.querySelector("#start-button");
+    const relicCountText = document.querySelector("#relic-count");
+    const messageText = document.querySelector("#message");
+
+    let collectedCount = 0;
+    let gameActive = false;
+    let ended = false;
+    let flashlightOn = true;
+    let yaw = 0;
+    let pitch = 0;
+
+    const keys = {};
+
+    function showEndScreen(won) {
+      ended = true;
+      gameActive = false;
+
+      title.textContent = won ? "You escaped" : "It found you";
+      description.textContent = won
+        ? "You found the exit and escaped the room."
+        : "The creature caught you. Try again.";
+
+      startButton.textContent = "Play again";
+      overlay.style.display = "grid";
+
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+    }
+
+    startButton.addEventListener("click", () => {
+      if (ended) {
+        window.location.reload();
+        return;
+      }
+
+      renderer.domElement.requestPointerLock();
+    });
+
+    document.addEventListener("pointerlockchange", () => {
+      gameActive = document.pointerLockElement === renderer.domElement;
+
+      if (ended) {
+        overlay.style.display = "grid";
+        return;
+      }
+
+      if (gameActive) {
+        overlay.style.display = "none";
+      } else {
+        title.textContent = "Paused";
+        description.textContent = "Click below to return to the room.";
+        startButton.textContent = "Resume";
+        overlay.style.display = "grid";
+      }
+    });
+
+    document.addEventListener("mousemove", (event) => {
+      if (!gameActive) return;
+
+      const sensitivity = 0.002;
+      yaw -= event.movementX * sensitivity;
+      pitch -= event.movementY * sensitivity;
+      pitch = THREE.MathUtils.clamp(pitch, -1.45, 1.45);
+
+      camera.rotation.set(pitch, yaw, 0, "YXZ");
+    });
+
+    document.addEventListener("keydown", (event) => {
+      keys[event.code] = true;
+
+      if (event.code === "KeyF" && gameActive && !event.repeat) {
+        flashlightOn = !flashlightOn;
+        flashlight.visible = flashlightOn;
+        flashlightFill.visible = flashlightOn;
+      }
+    });
+
+    document.addEventListener("keyup", (event) => {
+      keys[event.code] = false;
+    });
+
+    // Basic wall and obstacle collision
+    function canMoveTo(x, z) {
+      const edge = 13.7;
+
+      if (x < -edge || x > edge || z < -edge || z > edge) {
+        return false;
+      }
+
+      for (const obstacle of obstacles) {
+        const dx = x - obstacle.x;
+        const dz = z - obstacle.z;
+
+        if (Math.hypot(dx, dz) < obstacle.radius) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const delta = Math.min(clock.getDelta(), 0.05);
+      const time = clock.elapsedTime;
+
+      // Make relics float and rotate
+      for (const relic of relics) {
+        if (!relic.collected) {
+          relic.group.rotation.y += delta * 0.8;
+          relic.group.position.y = 1.2 + Math.sin(time * 2) * 0.12;
+        }
+      }
+
+      // Gentle flicker in the red room light
+      redLight.intensity = 22 + Math.random() * 5;
+
+      if (gameActive && !ended) {
+        // Player movement
+        let forward = Number(keys.KeyW) - Number(keys.KeyS);
+        let sideways = Number(keys.KeyD) - Number(keys.KeyA);
+
+        const length = Math.hypot(forward, sideways) || 1;
+        forward /= length;
+        sideways /= length;
+
+        const speed =
+          keys.ShiftLeft || keys.ShiftRight ? 6.2 : 4.1;
+
+        const moveX =
+          (-Math.sin(yaw) * forward + Math.cos(yaw) * sideways) *
+          speed * delta;
+
+        const moveZ =
+          (-Math.cos(yaw) * forward - Math.sin(yaw) * sideways) *
+          speed * delta;
+
+        const nextX = camera.position.x + moveX;
+        const nextZ = camera.position.z + moveZ;
+
+        if (canMoveTo(nextX, camera.position.z)) {
+          camera.position.x = nextX;
+        }
+
+        if (canMoveTo(camera.position.x, nextZ)) {
+          camera.position.z = nextZ;
+        }
+
+        // Collect relics
+        for (const relic of relics) {
+          if (relic.collected) continue;
+
+          const distance = camera.position.distanceTo(relic.group.position);
+
+          if (distance < 1.5) {
+            relic.collected = true;
+            relic.group.visible = false;
+            relic.glow.visible = false;
+            collectedCount++;
+            relicCountText.textContent = collectedCount;
+
+            messageText.textContent =
+              collectedCount === 3
+                ? "The exit is unlocked. Find the red door."
+                : "Relic found. Keep looking.";
+          }
+        }
+
+        // Monster chases the player when close enough
+        const dx = camera.position.x - monster.position.x;
+        const dz = camera.position.z - monster.position.z;
+        const monsterDistance = Math.hypot(dx, dz);
+
+        if (monsterDistance < 20 && monsterDistance > 0.001) {
+          const monsterSpeed =
+            keys.ShiftLeft || keys.ShiftRight ? 1.8 : 2.15;
+
+          monster.position.x +=
+            (dx / monsterDistance) * monsterSpeed * delta;
+
+          monster.position.z +=
+            (dz / monsterDistance) * monsterSpeed * delta;
+
+          monster.lookAt(camera.position.x, 1.2, camera.position.z);
+        }
+
+        if (monsterDistance < 1.25) {
+          showEndScreen(false);
+        }
+
+        // Escape through the exit after collecting all relics
+        const nearExit =
+          Math.abs(camera.position.x) < 2.5 &&
+          camera.position.z < -12.2;
+
+        if (collectedCount === 3 && nearExit) {
+          showEndScreen(true);
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
